@@ -4,6 +4,7 @@ import { useDesignStore } from '../store/designStore';
 import { useAuthStore } from '../store/authStore';
 import { ChatPanel } from './ChatPanel';
 import { DesignCanvas } from './DesignCanvas';
+import { FileDropzone } from './FileDropzone';
 
 interface DesignEditorProps {
   onBack: () => void;
@@ -11,7 +12,8 @@ interface DesignEditorProps {
 
 export const DesignEditor: React.FC<DesignEditorProps> = ({ onBack }) => {
   const [isChatOpen, setIsChatOpen] = useState(true);
-  const { currentDesign, saveDesign, updateDesign } = useDesignStore();
+  const [showFileUpload, setShowFileUpload] = useState(false);
+  const { currentDesign, saveDesign, updateDesign, uploadFile } = useDesignStore();
   const { user } = useAuthStore();
 
   const handleSave = () => {
@@ -24,6 +26,36 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({ onBack }) => {
     if (currentDesign) {
       updateDesign({ name: newName });
     }
+  };
+
+  const handleFileUpload = async (files: File[]) => {
+    for (const file of files) {
+      try {
+        const fileUrl = await uploadFile(file);
+        
+        // Add image element to canvas
+        const newElement = {
+          id: `img-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          type: 'image',
+          content: fileUrl,
+          x: 100,
+          y: 100,
+          width: 200,
+          height: 150,
+          rotation: 0,
+          style: {}
+        };
+
+        if (currentDesign) {
+          updateDesign({ 
+            elements: [...(currentDesign.elements || []), newElement] 
+          });
+        }
+      } catch (error) {
+        console.error('Error uploading file:', error);
+      }
+    }
+    setShowFileUpload(false);
   };
 
   if (!currentDesign) {
@@ -114,7 +146,11 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({ onBack }) => {
                 <button className="p-2 hover:bg-white/30 rounded-md transition-all">
                   <Circle className="w-4 h-4 text-gray-700" />
                 </button>
-                <button className="p-2 hover:bg-white/30 rounded-md transition-all">
+                <button 
+                  onClick={() => setShowFileUpload(true)}
+                  className="p-2 hover:bg-white/30 rounded-md transition-all"
+                  title="Subir imagen"
+                >
                   <Image className="w-4 h-4 text-gray-700" />
                 </button>
               </div>
@@ -140,6 +176,39 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({ onBack }) => {
           </div>
         )}
       </div>
+
+      {/* File Upload Modal */}
+      {showFileUpload && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-96 max-w-[90vw] shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">Subir Imágenes</h3>
+              <button
+                onClick={() => setShowFileUpload(false)}
+                className="text-gray-500 hover:text-gray-700 text-xl"
+              >
+                ×
+              </button>
+            </div>
+            
+            <FileDropzone
+              onFileUpload={handleFileUpload}
+              accept="image/*"
+              multiple={true}
+              className="mb-4"
+            />
+            
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => setShowFileUpload(false)}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
