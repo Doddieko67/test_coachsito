@@ -10,10 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "file-saver": "^2.0.5",
     "framer-motion": "^12.18.1",
     "lucide-react": "^0.515.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-dropzone": "^14.3.8",
+    "react-image-crop": "^11.0.10",
     "react-router-dom": "^7.6.2",
     "zustand": "^5.0.5"
   },

@@ -9,16 +9,28 @@ interface Template {
   elements: any[];
 }
 
+interface UploadedFile {
+  id: string;
+  name: string;
+  url: string;
+  type: string;
+  size: number;
+  uploadedAt: Date;
+}
+
 interface DesignState {
   currentDesign: Design | null;
   templates: Template[];
   userDesigns: Design[];
+  uploadedFiles: UploadedFile[];
   createDesign: (templateId?: string) => void;
   saveDesign: (design: Design) => void;
   loadDesign: (designId: string) => void;
   updateDesign: (updates: Partial<Design>) => void;
   loadUserDesigns: () => void;
   deleteDesign: (designId: string) => void;
+  uploadFile: (file: File) => Promise<string>;
+  deleteFile: (fileId: string) => void;
 }
 
 const mockTemplates: Template[] = [
@@ -70,6 +82,7 @@ export const useDesignStore = create<DesignState>((set, get) => ({
   currentDesign: null,
   templates: mockTemplates,
   userDesigns: [],
+  uploadedFiles: [],
   
   loadUserDesigns: () => {
     const currentUser = getCurrentUser();
@@ -147,5 +160,32 @@ export const useDesignStore = create<DesignState>((set, get) => ({
     if (globalIndex >= 0) {
       mockDesigns.splice(globalIndex, 1);
     }
+  },
+
+  uploadFile: async (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const fileUrl = e.target?.result as string;
+        const uploadedFile: UploadedFile = {
+          id: `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          name: file.name,
+          url: fileUrl,
+          type: file.type,
+          size: file.size,
+          uploadedAt: new Date()
+        };
+        
+        const uploadedFiles = [...get().uploadedFiles, uploadedFile];
+        set({ uploadedFiles });
+        resolve(fileUrl);
+      };
+      reader.readAsDataURL(file);
+    });
+  },
+
+  deleteFile: (fileId: string) => {
+    const uploadedFiles = get().uploadedFiles.filter(f => f.id !== fileId);
+    set({ uploadedFiles });
   }
 }));
