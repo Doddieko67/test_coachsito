@@ -1,14 +1,29 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Login } from './components/Login';
 import { TemplateGallery } from './components/TemplateGallery';
 import { DesignEditor } from './components/DesignEditor';
 import { useAuthStore } from './store/authStore';
+import { useDesignStore } from './store/designStore';
 
 type AppView = 'login' | 'templates' | 'editor';
 
 function App() {
   const [currentView, setCurrentView] = useState<AppView>('login');
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, initializeAuth } = useAuthStore();
+  const { loadUserDesigns } = useDesignStore();
+
+  // Initialize the app
+  useEffect(() => {
+    initializeAuth();
+  }, [initializeAuth]);
+
+  // Load user designs when authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadUserDesigns();
+      setCurrentView('templates');
+    }
+  }, [isAuthenticated, loadUserDesigns]);
 
   const handleLoginSuccess = () => {
     setCurrentView('templates');

@@ -1,38 +1,60 @@
 import { create } from 'zustand';
-
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  avatar: string;
-}
+import { mockUsers, setCurrentUser, initializeData, type User } from '../data/mockData';
 
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
+  allUsers: User[];
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
+  switchUser: (userId: string) => void;
+  initializeAuth: () => void;
 }
-
-const mockUser: User = {
-  id: '1',
-  name: 'Juan Pérez',
-  email: 'juan@ejemplo.com',
-  avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face'
-};
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   isAuthenticated: false,
+  allUsers: mockUsers,
+  
+  initializeAuth: () => {
+    initializeData();
+    const savedUserId = localStorage.getItem('currentUserId');
+    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
+    
+    if (savedUserId && isAuthenticated) {
+      const user = mockUsers.find(u => u.id === savedUserId);
+      if (user) {
+        set({ user, isAuthenticated: true });
+      }
+    }
+  },
+
   login: async (email: string, password: string) => {
-    // Simulación de login
+    // Simulación de login - buscar usuario por email
     if (email && password) {
-      set({ user: mockUser, isAuthenticated: true });
-      return true;
+      const user = mockUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
+      if (user) {
+        setCurrentUser(user.id);
+        localStorage.setItem('isAuthenticated', 'true');
+        set({ user, isAuthenticated: true });
+        return true;
+      }
     }
     return false;
   },
+
   logout: () => {
+    localStorage.removeItem('currentUserId');
+    localStorage.removeItem('isAuthenticated');
     set({ user: null, isAuthenticated: false });
   },
+
+  switchUser: (userId: string) => {
+    const user = mockUsers.find(u => u.id === userId);
+    if (user) {
+      setCurrentUser(userId);
+      localStorage.setItem('isAuthenticated', 'true');
+      set({ user, isAuthenticated: true });
+    }
+  }
 }));

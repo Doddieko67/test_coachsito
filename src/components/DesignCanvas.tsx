@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import type { Design } from '../store/designStore';
+import type { Design } from '../data/mockData';
 
 interface DesignCanvasProps {
   design: Design;

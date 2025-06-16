@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Eye, EyeOff, Palette } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
+import { mockUsers } from '../data/mockData';
 
 interface LoginProps {
   onSuccess: () => void;
@@ -164,15 +165,32 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
 
           <div className="mt-8 text-center">
             <div 
-              className="px-4 py-2 rounded-lg inline-block"
+              className="px-4 py-3 rounded-lg inline-block mb-4"
               style={{
                 background: 'rgba(255, 255, 255, 0.1)',
                 backdropFilter: 'blur(10px)'
               }}
             >
-              <p className="text-white/80 text-sm">
+              <p className="text-white/80 text-sm mb-3">
                 💡 Usa cualquier email y contraseña para continuar
               </p>
+              <p className="text-white/60 text-xs mb-2">Usuarios disponibles:</p>
+              <div className="flex justify-center space-x-2">
+                {mockUsers.slice(0, 3).map((user) => (
+                  <div
+                    key={user.id}
+                    className="text-center cursor-pointer"
+                    onClick={() => setEmail(user.email)}
+                  >
+                    <img
+                      src={user.avatar}
+                      alt={user.name}
+                      className="w-8 h-8 rounded-full border border-white/30 mb-1 mx-auto hover:scale-110 transition-transform"
+                    />
+                    <p className="text-xs text-white/60">{user.name.split(' ')[0]}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
