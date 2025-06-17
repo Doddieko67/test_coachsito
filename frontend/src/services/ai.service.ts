@@ -111,7 +111,51 @@ Respuesta:`;
   },
 
   /**
-   * Envía mensaje a Gemini AI con contexto del diseño
+   * Genera un prompt contextual con herramientas de canvas disponibles
+   */
+  generateContextualPromptWithTools(analysis: DesignAnalysis, userMessage: string): string {
+    const context = `
+Contexto del diseño actual:
+- Elementos: ${analysis.elementCount} (${analysis.complexity})
+- Contiene: ${[
+  analysis.hasText && 'texto',
+  analysis.hasImages && 'imágenes', 
+  analysis.hasShapes && 'formas'
+].filter(Boolean).join(', ') || 'elementos básicos'}
+- Layout: ${analysis.layout}
+- Colores principales: ${analysis.dominantColors.join(', ') || 'colores por defecto'}
+
+Eres un asistente experto en diseño que puede manipular el canvas usando herramientas.
+Tienes acceso a las siguientes herramientas de canvas mediante window.canvasTools:
+
+HERRAMIENTAS DISPONIBLES:
+1. addText(x, y, text, fontSize?, color?) - Agregar texto
+2. addRectangle(x, y, width, height, color?) - Agregar rectángulo  
+3. addCircle(x, y, radius, color?) - Agregar círculo
+4. addArrow(fromX, fromY, toX, toY, color?) - Agregar flecha
+5. addMindMapNode(parentId, text, x?, y?) - Agregar nodo de mapa mental
+6. createFlowChart(nodes, connections) - Crear diagrama de flujo
+7. moveElement(elementId, x, y) - Mover elemento
+8. deleteElement(elementId) - Eliminar elemento
+9. editText(elementId, newText) - Editar texto
+10. clearCanvas() - Limpiar canvas
+11. alignElementsHorizontally(elementIds) - Alinear horizontalmente
+12. alignElementsVertically(elementIds) - Alinear verticalmente
+
+IMPORTANTE: Cuando el usuario pida crear, modificar o agregar elementos:
+1. Usa las herramientas apropiadas
+2. Ejecuta el código JavaScript necesario
+3. Explica qué hiciste
+
+Usuario: ${userMessage}
+
+Si el usuario quiere agregar elementos al canvas, ejecuta las herramientas correspondientes y responde explicando qué se agregó.`;
+
+    return context;
+  },
+
+  /**
+   * Envía mensaje a Gemini AI con contexto del diseño y herramientas
    */
   async sendMessage(
     userMessage: string, 
@@ -126,8 +170,8 @@ Respuesta:`;
       // Analizar el diseño actual
       const analysis = this.analyzeDesign(elements);
       
-      // Generar prompt con contexto
-      const contextualPrompt = this.generateContextualPrompt(analysis, userMessage);
+      // Generar prompt con contexto y herramientas
+      const contextualPrompt = this.generateContextualPromptWithTools(analysis, userMessage);
       
       // Crear historial de conversación para el modelo
       const chat = model.startChat({

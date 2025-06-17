@@ -8,9 +8,8 @@ export const designsService = {
   async getMyDesigns() {
     const { data, error } = await supabase
       .from('designs')
-      .select(`
-        *
-      `)
+      .select('*')
+      .eq('user_id', (await supabase.auth.getUser()).data.user?.id)
       .order('updated_at', { ascending: false });
 
     if (error) throw error;

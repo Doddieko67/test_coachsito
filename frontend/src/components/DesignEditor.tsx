@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useDesignStore } from '../store/designStore';
 import { useAuthStore } from '../store/authStore';
 import { ChatPanel } from './ChatPanel';
-import { DesignCanvas } from './DesignCanvas';
+import { ExcalidrawCanvas } from './ExcalidrawCanvas';
 import { FileDropzone } from './FileDropzone';
 
 export const DesignEditor: React.FC = () => {
@@ -30,7 +30,11 @@ export const DesignEditor: React.FC = () => {
     const timeoutId = setTimeout(async () => {
       try {
         setIsAutoSaving(true);
-        await saveDesign({});
+        // Save the current design data (title and canvas_data)
+        await saveDesign({
+          title: currentDesign.title,
+          canvas_data: currentDesign.canvas_data
+        });
       } catch (error) {
         console.error('Auto-save failed:', error);
       } finally {
@@ -39,12 +43,15 @@ export const DesignEditor: React.FC = () => {
     }, 2000); // Auto-save after 2 seconds of inactivity
 
     return () => clearTimeout(timeoutId);
-  }, [currentDesign, saveDesign]);
+  }, [currentDesign?.title, currentDesign?.canvas_data, saveDesign]);
 
   const handleSave = async () => {
     if (currentDesign) {
       try {
-        await saveDesign({});
+        await saveDesign({
+          title: currentDesign.title,
+          canvas_data: currentDesign.canvas_data
+        });
       } catch (error) {
         console.error('Error saving design:', error);
       }
@@ -60,8 +67,9 @@ export const DesignEditor: React.FC = () => {
   const handleFileUpload = async (files: File[]) => {
     for (const file of files) {
       try {
-        // TODO: Implement file upload to Supabase Storage
-        const fileUrl = URL.createObjectURL(file); // Temporary local URL
+        // Upload file to Supabase Storage
+        const { uploadService } = await import('../services/upload.service');
+        const fileUrl = await uploadService.uploadImage(file, 'designs');
         
         // Add image element to canvas
         const newElement = {
@@ -91,6 +99,8 @@ export const DesignEditor: React.FC = () => {
         }
       } catch (error) {
         console.error('Error uploading file:', error);
+        // Show user-friendly error message
+        alert('Error subiendo la imagen. Por favor intenta de nuevo.');
       }
     }
     setShowFileUpload(false);
@@ -211,8 +221,8 @@ export const DesignEditor: React.FC = () => {
           </div>
 
           {/* Canvas */}
-          <div className="flex-1 p-4 overflow-auto">
-            <DesignCanvas design={currentDesign} />
+          <div className="flex-1 overflow-hidden">
+            <ExcalidrawCanvas design={currentDesign} />
           </div>
         </div>
 

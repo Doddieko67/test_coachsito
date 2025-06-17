@@ -37,8 +37,31 @@ export const useAuthStore = create<AuthState>((set) => ({
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session) {
-        const user = await authService.getCurrentUser();
-        set({ user, isAuthenticated: true, loading: false, initialized: true });
+        try {
+          const user = await authService.getCurrentUser();
+          set({ user, isAuthenticated: true, loading: false, initialized: true });
+        } catch (error) {
+          console.error('Error getting user profile:', error);
+          // If profile doesn't exist, create it
+          const authUser = session.user;
+          if (authUser) {
+            try {
+              await authService.createUserProfile(authUser);
+              const user = await authService.getCurrentUser();
+              set({ user, isAuthenticated: true, loading: false, initialized: true });
+            } catch (createError) {
+              console.error('Error creating user profile:', createError);
+              // Fallback: authenticate without profile
+              set({ 
+                user: null, 
+                isAuthenticated: true, 
+                loading: false, 
+                initialized: true,
+                error: 'Error loading user profile'
+              });
+            }
+          }
+        }
       } else {
         set({ user: null, isAuthenticated: false, loading: false, initialized: true });
       }
@@ -46,8 +69,21 @@ export const useAuthStore = create<AuthState>((set) => ({
       // Listen for auth changes
       const { data: { subscription } } = authService.onAuthStateChange(async (event, session) => {
         if (event === 'SIGNED_IN' && session) {
-          const user = await authService.getCurrentUser();
-          set({ user, isAuthenticated: true });
+          try {
+            const user = await authService.getCurrentUser();
+            set({ user, isAuthenticated: true });
+          } catch (error) {
+            console.error('Error getting user profile on auth change:', error);
+            // Try to create profile if it doesn't exist
+            try {
+              await authService.createUserProfile(session.user);
+              const user = await authService.getCurrentUser();
+              set({ user, isAuthenticated: true });
+            } catch (createError) {
+              console.error('Error creating user profile on auth change:', createError);
+              set({ user: null, isAuthenticated: true });
+            }
+          }
         } else if (event === 'SIGNED_OUT') {
           set({ user: null, isAuthenticated: false });
         }
