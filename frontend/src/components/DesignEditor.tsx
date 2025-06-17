@@ -1,37 +1,67 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Save, ArrowLeft, Users, MessageSquare, Type, Square, Circle, Image, Download } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useDesignStore } from '../store/designStore';
 import { useAuthStore } from '../store/authStore';
 import { ChatPanel } from './ChatPanel';
 import { DesignCanvas } from './DesignCanvas';
 import { FileDropzone } from './FileDropzone';
 
-interface DesignEditorProps {
-  onBack: () => void;
-}
-
-export const DesignEditor: React.FC<DesignEditorProps> = ({ onBack }) => {
+export const DesignEditor: React.FC = () => {
+  const navigate = useNavigate();
+  const { designId } = useParams<{ designId: string }>();
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [showFileUpload, setShowFileUpload] = useState(false);
-  const { currentDesign, saveDesign, updateDesign, uploadFile } = useDesignStore();
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const { currentDesign, saveDesign, updateDesignLocally, loadDesign } = useDesignStore();
   const { user } = useAuthStore();
 
-  const handleSave = () => {
+  // Load design if designId is provided
+  useEffect(() => {
+    if (designId && (!currentDesign || currentDesign.id !== designId)) {
+      loadDesign(designId);
+    }
+  }, [designId, currentDesign, loadDesign]);
+
+  // Auto-save effect
+  useEffect(() => {
+    if (!currentDesign) return;
+
+    const timeoutId = setTimeout(async () => {
+      try {
+        setIsAutoSaving(true);
+        await saveDesign({});
+      } catch (error) {
+        console.error('Auto-save failed:', error);
+      } finally {
+        setIsAutoSaving(false);
+      }
+    }, 2000); // Auto-save after 2 seconds of inactivity
+
+    return () => clearTimeout(timeoutId);
+  }, [currentDesign, saveDesign]);
+
+  const handleSave = async () => {
     if (currentDesign) {
-      saveDesign(currentDesign);
+      try {
+        await saveDesign({});
+      } catch (error) {
+        console.error('Error saving design:', error);
+      }
     }
   };
 
   const handleNameChange = (newName: string) => {
     if (currentDesign) {
-      updateDesign({ name: newName });
+      updateDesignLocally({ title: newName });
     }
   };
 
   const handleFileUpload = async (files: File[]) => {
     for (const file of files) {
       try {
-        const fileUrl = await uploadFile(file);
+        // TODO: Implement file upload to Supabase Storage
+        const fileUrl = URL.createObjectURL(file); // Temporary local URL
         
         // Add image element to canvas
         const newElement = {
@@ -47,8 +77,16 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({ onBack }) => {
         };
 
         if (currentDesign) {
-          updateDesign({ 
-            elements: [...(currentDesign.elements || []), newElement] 
+          const canvasData = currentDesign.canvas_data as any;
+          const currentElements = Array.isArray(canvasData?.elements) 
+            ? canvasData.elements 
+            : [];
+          
+          updateDesignLocally({ 
+            canvas_data: {
+              ...(currentDesign.canvas_data as any),
+              elements: [...currentElements, newElement]
+            }
           });
         }
       } catch (error) {
@@ -62,9 +100,11 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({ onBack }) => {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-50 via-blue-50 to-cyan-50 flex items-center justify-center">
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">No hay diseño seleccionado</h2>
+          <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">Cargando diseño...</h2>
+          <p className="text-gray-600 mb-6">Por favor espera un momento</p>
           <button
-            onClick={onBack}
+            onClick={() => navigate('/dashboard')}
             className="bg-gradient-to-r from-purple-500 to-cyan-500 text-white px-6 py-3 rounded-xl font-semibold"
           >
             Volver a Plantillas
@@ -82,7 +122,7 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({ onBack }) => {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <button
-                onClick={onBack}
+                onClick={() => navigate('/dashboard')}
                 className="p-2 hover:bg-white/20 rounded-lg transition-all"
               >
                 <ArrowLeft className="w-5 h-5 text-gray-700" />
@@ -90,7 +130,7 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({ onBack }) => {
               
               <input
                 type="text"
-                value={currentDesign.name}
+                value={currentDesign.title}
                 onChange={(e) => handleNameChange(e.target.value)}
                 className="text-lg font-semibold bg-transparent border-none focus:outline-none focus:bg-white/20 rounded-lg px-2 py-1 text-gray-800 min-w-0"
               />
@@ -108,18 +148,25 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({ onBack }) => {
                 <MessageSquare className="w-5 h-5" />
               </button>
               
+              {/* Auto-save indicator */}
+              {isAutoSaving && (
+                <div className="flex items-center space-x-2 text-gray-600 text-sm">
+                  <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                  <span>Guardando...</span>
+                </div>
+              )}
+
               <div className="flex items-center space-x-1 bg-white/20 rounded-lg px-2 py-1">
                 <Users className="w-4 h-4 text-gray-600" />
-                <img
-                  src={user?.avatar}
-                  alt={user?.name}
-                  className="w-6 h-6 rounded-full"
-                />
+                <div className="w-6 h-6 rounded-full bg-gradient-to-r from-purple-400 to-pink-400 flex items-center justify-center text-white text-xs font-semibold">
+                  {user?.name?.charAt(0)?.toUpperCase() || 'U'}
+                </div>
               </div>
 
               <button
                 onClick={handleSave}
-                className="bg-gradient-to-r from-purple-500 to-cyan-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transition-all flex items-center space-x-2"
+                disabled={isAutoSaving}
+                className="bg-gradient-to-r from-purple-500 to-cyan-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transition-all flex items-center space-x-2 disabled:opacity-50"
               >
                 <Save className="w-4 h-4" />
                 <span>Guardar</span>

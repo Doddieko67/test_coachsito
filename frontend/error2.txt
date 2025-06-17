@@ -1,0 +1,31 @@
+
+[vite] connecting... client:789:9
+Download the React DevTools for a better development experience: https://react.dev/link/react-devtools react-dom_client.js:17987:54
+App useEffect: Initializing auth 2 App.tsx:72:13
+App useEffect: User authenticated, loading data App.tsx:77:15
+Error loading designs: 
+Object { code: "42P17", details: null, hint: null, message: 'infinite recursion detected in policy for relation "designs"' }
+designStore.ts:29:15
+Error loading designs: 
+Object { code: "42P17", details: null, hint: null, message: 'infinite recursion detected in policy for relation "designs"' }
+designStore.ts:29:15
+Error loading designs: 
+Object { code: "42P17", details: null, hint: null, message: 'infinite recursion detected in policy for relation "designs"' }
+designStore.ts:29:15
+Error creating design: 
+Object { code: "42P17", details: null, hint: null, message: 'infinite recursion detected in policy for relation "designs"' }
+designStore.ts:58:15
+Error creating blank design: 
+Object { code: "42P17", details: null, hint: null, message: 'infinite recursion detected in policy for relation "designs"' }
+TemplateGallery.tsx:64:15
+[vite] connected. client:912:15
+XHRPOST
+https://lfmkkrchvghdoasmpacf.supabase.co/rest/v1/designs?select=*
+[HTTP/3 500  75ms]
+
+Error creating design: 
+Object { code: "42P17", details: null, hint: null, message: 'infinite recursion detected in policy for relation "designs"' }
+designStore.ts:58:15
+Error creating blank design: 
+Object { code: "42P17", details: null, hint: null, message: 'infinite recursion detected in policy for relation "designs"' }
+TemplateGallery.tsx:64:15

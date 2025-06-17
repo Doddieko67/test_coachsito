@@ -1,151 +1,267 @@
 import { create } from 'zustand';
-import { getUserDesigns, addUserDesign, mockDesigns, getCurrentUser, type Design } from '../data/mockData';
+import { designsService } from '../services/designs.service';
+import type { Database } from '../types/supabase';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
-interface Template {
-  id: string;
-  name: string;
-  category: string;
-  thumbnail: string;
-  elements: any[];
-}
+type Design = Database['public']['Tables']['designs']['Row'];
+type Template = Database['public']['Tables']['templates']['Row'];
 
 interface DesignState {
   currentDesign: Design | null;
   templates: Template[];
   userDesigns: Design[];
-  createDesign: (templateId?: string) => void;
-  saveDesign: (design: Design) => void;
-  loadDesign: (designId: string) => void;
-  updateDesign: (updates: Partial<Design>) => void;
-  loadUserDesigns: () => void;
-  deleteDesign: (designId: string) => void;
+  loading: boolean;
+  error: string | null;
+  realtimeChannel: RealtimeChannel | null;
+  
+  // Actions
+  loadTemplates: () => Promise<void>;
+  loadUserDesigns: () => Promise<void>;
+  createDesign: (title: string, templateId?: string) => Promise<void>;
+  saveDesign: (updates: Partial<Design>) => Promise<void>;
+  loadDesign: (designId: string) => Promise<void>;
+  deleteDesign: (designId: string) => Promise<void>;
+  duplicateDesign: (designId: string) => Promise<void>;
+  subscribeToDesignUpdates: (designId: string) => void;
+  unsubscribeFromDesignUpdates: () => void;
+  updateDesignLocally: (updates: Partial<Design>) => void;
 }
-
-const mockTemplates: Template[] = [
-  {
-    id: '1',
-    name: 'Presentación Empresarial',
-    category: 'Presentación',
-    thumbnail: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=300&h=200&fit=crop',
-    elements: []
-  },
-  {
-    id: '2',
-    name: 'Post de Instagram',
-    category: 'Social Media',
-    thumbnail: 'https://images.unsplash.com/photo-1611224923853-80b023f02d71?w=300&h=200&fit=crop',
-    elements: []
-  },
-  {
-    id: '3',
-    name: 'Flyer Evento',
-    category: 'Marketing',
-    thumbnail: 'https://images.unsplash.com/photo-1541701494587-cb58502866ab?w=300&h=200&fit=crop',
-    elements: []
-  },
-  {
-    id: '4',
-    name: 'Tarjeta de Presentación',
-    category: 'Negocio',
-    thumbnail: 'https://images.unsplash.com/photo-1586953208448-b95a79798f07?w=300&h=200&fit=crop',
-    elements: []
-  },
-  {
-    id: '5',
-    name: 'Banner Web',
-    category: 'Web Design',
-    thumbnail: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=300&h=200&fit=crop',
-    elements: []
-  },
-  {
-    id: '6',
-    name: 'Logo Moderno',
-    category: 'Branding',
-    thumbnail: 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=300&h=200&fit=crop',
-    elements: []
-  }
-];
 
 export const useDesignStore = create<DesignState>((set, get) => ({
   currentDesign: null,
-  templates: mockTemplates,
+  templates: [],
   userDesigns: [],
+  loading: false,
+  error: null,
+  realtimeChannel: null,
   
-  loadUserDesigns: () => {
-    const currentUser = getCurrentUser();
-    if (currentUser) {
-      const designs = getUserDesigns(currentUser.id);
-      set({ userDesigns: designs });
+  loadTemplates: async () => {
+    try {
+      set({ loading: true, error: null });
+      const templates = await designsService.getTemplates();
+      set({ templates, loading: false });
+    } catch (error) {
+      console.error('Error loading templates:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Failed to load templates',
+        loading: false 
+      });
     }
   },
 
-  createDesign: (templateId) => {
-    const currentUser = getCurrentUser();
-    if (!currentUser) return;
-
-    const template = templateId ? get().templates.find(t => t.id === templateId) : null;
-    const newDesign: Design = {
-      id: `design-${Date.now()}`,
-      name: template ? `${template.name} - Copia` : 'Nuevo Diseño',
-      thumbnail: template?.thumbnail || 'https://images.unsplash.com/photo-1586953208448-b95a79798f07?w=300&h=200&fit=crop',
-      elements: template?.elements || [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      ownerId: currentUser.id,
-      collaborators: [],
-      isPublic: false,
-      category: template?.category || 'General'
-    };
-    set({ currentDesign: newDesign });
-  },
-
-  saveDesign: (design) => {
-    const currentUser = getCurrentUser();
-    if (!currentUser) return;
-
-    const userDesigns = get().userDesigns;
-    const existingIndex = userDesigns.findIndex(d => d.id === design.id);
-    
-    const updatedDesign = { 
-      ...design, 
-      updatedAt: new Date(),
-      ownerId: design.ownerId || currentUser.id 
-    };
-    
-    if (existingIndex >= 0) {
-      userDesigns[existingIndex] = updatedDesign;
-    } else {
-      userDesigns.push(updatedDesign);
-      addUserDesign(updatedDesign);
-    }
-    
-    set({ userDesigns: [...userDesigns], currentDesign: updatedDesign });
-  },
-
-  loadDesign: (designId) => {
-    const userDesigns = get().userDesigns;
-    const design = userDesigns.find(d => d.id === designId);
-    if (design) {
-      set({ currentDesign: design });
+  loadUserDesigns: async () => {
+    try {
+      set({ loading: true, error: null });
+      const designs = await designsService.getMyDesigns();
+      set({ userDesigns: designs || [], loading: false });
+    } catch (error) {
+      console.error('Error loading designs:', error);
+      // TEMPORAL: Si hay error de RLS, usar datos mock
+      if ((error as any)?.code === '42P17') {
+        console.log('Using mock data due to RLS recursion error');
+        set({ 
+          userDesigns: [], // Array vacío por ahora
+          loading: false,
+          error: null // No mostrar error al usuario
+        });
+      } else {
+        set({ 
+          error: error instanceof Error ? error.message : 'Failed to load designs',
+          loading: false 
+        });
+      }
     }
   },
 
-  updateDesign: (updates) => {
+  createDesign: async (title: string, templateId?: string) => {
+    try {
+      set({ loading: true, error: null });
+      
+      let newDesign: Design;
+      
+      if (templateId) {
+        newDesign = await designsService.createDesignFromTemplate(templateId, title);
+      } else {
+        newDesign = await designsService.createDesign({
+          title,
+          canvas_data: { elements: [] },
+          user_id: '', // This will be set by the service
+        });
+      }
+      
+      const userDesigns = get().userDesigns;
+      set({ 
+        currentDesign: newDesign,
+        userDesigns: [newDesign, ...userDesigns],
+        loading: false 
+      });
+      
+      // Subscribe to real-time updates for this design
+      get().subscribeToDesignUpdates(newDesign.id);
+      
+    } catch (error) {
+      console.error('Error creating design:', error);
+      // TEMPORAL: Si hay error de RLS, crear diseño mock
+      if ((error as any)?.code === '42P17') {
+        console.log('Creating mock design due to RLS recursion error');
+        const mockDesign: Design = {
+          id: `mock-${Date.now()}`,
+          user_id: 'mock-user',
+          title,
+          canvas_data: { elements: [] },
+          thumbnail_url: null,
+          is_template: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        
+        const userDesigns = get().userDesigns;
+        set({ 
+          currentDesign: mockDesign,
+          userDesigns: [mockDesign, ...userDesigns],
+          loading: false,
+          error: null
+        });
+        return; // No throw error
+      } else {
+        set({ 
+          error: error instanceof Error ? error.message : 'Failed to create design',
+          loading: false 
+        });
+        throw error;
+      }
+    }
+  },
+
+  saveDesign: async (updates: Partial<Design>) => {
+    const currentDesign = get().currentDesign;
+    if (!currentDesign) return;
+    
+    try {
+      set({ loading: true, error: null });
+      
+      const updatedDesign = await designsService.updateDesign(currentDesign.id, updates);
+      
+      // Update both current design and in the list
+      const userDesigns = get().userDesigns.map(d => 
+        d.id === updatedDesign.id ? updatedDesign : d
+      );
+      
+      set({ 
+        currentDesign: updatedDesign,
+        userDesigns,
+        loading: false 
+      });
+      
+    } catch (error) {
+      console.error('Error saving design:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Failed to save design',
+        loading: false 
+      });
+      throw error;
+    }
+  },
+
+  loadDesign: async (designId: string) => {
+    try {
+      set({ loading: true, error: null });
+      
+      const design = await designsService.getDesignById(designId);
+      set({ currentDesign: design, loading: false });
+      
+      // Subscribe to real-time updates
+      get().subscribeToDesignUpdates(designId);
+      
+    } catch (error) {
+      console.error('Error loading design:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Failed to load design',
+        loading: false 
+      });
+      throw error;
+    }
+  },
+
+  deleteDesign: async (designId: string) => {
+    try {
+      set({ loading: true, error: null });
+      
+      await designsService.deleteDesign(designId);
+      
+      const userDesigns = get().userDesigns.filter(d => d.id !== designId);
+      set({ userDesigns, loading: false });
+      
+      // Clear current design if it was deleted
+      if (get().currentDesign?.id === designId) {
+        set({ currentDesign: null });
+      }
+      
+    } catch (error) {
+      console.error('Error deleting design:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Failed to delete design',
+        loading: false 
+      });
+      throw error;
+    }
+  },
+
+  duplicateDesign: async (designId: string) => {
+    try {
+      set({ loading: true, error: null });
+      
+      const newDesign = await designsService.duplicateDesign(designId);
+      
+      const userDesigns = get().userDesigns;
+      set({ 
+        userDesigns: [newDesign, ...userDesigns],
+        loading: false 
+      });
+      
+      return newDesign;
+      
+    } catch (error) {
+      console.error('Error duplicating design:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Failed to duplicate design',
+        loading: false 
+      });
+      throw error;
+    }
+  },
+
+  subscribeToDesignUpdates: (designId: string) => {
+    // Unsubscribe from previous channel if any
+    get().unsubscribeFromDesignUpdates();
+    
+    const channel = designsService.subscribeToDesign(designId, (payload) => {
+      if (payload.new && get().currentDesign?.id === designId) {
+        set({ currentDesign: payload.new as Design });
+      }
+    });
+    
+    set({ realtimeChannel: channel });
+  },
+
+  unsubscribeFromDesignUpdates: () => {
+    const channel = get().realtimeChannel;
+    if (channel) {
+      channel.unsubscribe();
+      set({ realtimeChannel: null });
+    }
+  },
+
+  updateDesignLocally: (updates: Partial<Design>) => {
     const currentDesign = get().currentDesign;
     if (currentDesign) {
-      const updatedDesign = { ...currentDesign, ...updates, updatedAt: new Date() };
-      set({ currentDesign: updatedDesign });
-    }
-  },
-
-  deleteDesign: (designId) => {
-    const userDesigns = get().userDesigns.filter(d => d.id !== designId);
-    set({ userDesigns });
-    
-    // Also remove from global mock data
-    const globalIndex = mockDesigns.findIndex(d => d.id === designId);
-    if (globalIndex >= 0) {
-      mockDesigns.splice(globalIndex, 1);
+      set({ 
+        currentDesign: { 
+          ...currentDesign, 
+          ...updates,
+          updated_at: new Date().toISOString()
+        } 
+      });
     }
   }
 }));

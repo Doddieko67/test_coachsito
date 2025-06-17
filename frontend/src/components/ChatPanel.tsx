@@ -2,19 +2,50 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Bot, Sparkles, Palette, Type, Image } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
-import { getDesignChat, saveDesignChat, mockUsers, type ChatMessage } from '../data/mockData';
+import { useDesignStore } from '../store/designStore';
+import { chatService } from '../services/chat.service';
+import type { Database } from '../types/supabase';
+import type { DesignElement } from '../services/ai.service';
 
 interface ChatPanelProps {
   designId: string;
 }
+
+type ChatMessage = Database['public']['Tables']['chat_messages']['Row'] & {
+  profiles?: { name: string; avatar_url: string | null } | null;
+};
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({ designId }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [quickSuggestions, setQuickSuggestions] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { user } = useAuthStore();
+  const { currentDesign } = useDesignStore();
+
+  // Convertir elementos del diseño al formato esperado por IA
+  const getCurrentElements = (): DesignElement[] => {
+    if (!currentDesign?.canvas_data) return [];
+    
+    const canvasData = currentDesign.canvas_data as any;
+    const elements = canvasData?.elements || [];
+    
+    return elements.map((el: any) => ({
+      id: el.id,
+      type: el.type,
+      x: el.x,
+      y: el.y,
+      width: el.width,
+      height: el.height,
+      content: el.content,
+      color: el.color,
+      fillColor: el.fillColor,
+      strokeColor: el.strokeColor,
+      fontSize: el.fontSize
+    }));
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -24,93 +55,80 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ designId }) => {
     scrollToBottom();
   }, [messages]);
 
+  // Actualizar sugerencias cuando cambie el diseño
+  useEffect(() => {
+    const currentElements = getCurrentElements();
+    const suggestions = chatService.getQuickSuggestions(currentElements);
+    setQuickSuggestions(suggestions);
+  }, [currentDesign?.canvas_data]);
+
   // Load chat history when component mounts or designId changes
   useEffect(() => {
-    const loadChatHistory = () => {
-      const chatHistory = getDesignChat(designId);
-      if (chatHistory && chatHistory.messages.length > 0) {
-        setMessages(chatHistory.messages);
-      } else {
-        // Initialize with AI welcome message if no history exists
-        const welcomeMessage: ChatMessage = {
-          id: `msg-${Date.now()}`,
-          content: '¡Hola! Soy tu asistente de diseño con IA. Puedo ayudarte a mejorar tu diseño. ¿Qué te gustaría hacer?',
-          sender: 'ai',
-          timestamp: new Date(),
-          suggestions: [
-            'Cambiar colores',
-            'Agregar texto',
-            'Mejorar composición',
-            'Sugerir elementos'
-          ],
-          type: 'text'
-        };
-        setMessages([welcomeMessage]);
+    const loadChatHistory = async () => {
+      try {
+        const chatMessages = await chatService.getMessagesByDesignId(designId);
+        
+        if (chatMessages && chatMessages.length > 0) {
+          setMessages(chatMessages);
+        } else {
+          // Initialize with AI welcome message if no history exists
+          const welcomeMessage = await chatService.sendMessage({
+            design_id: designId,
+            message: '¡Hola! Soy tu asistente de diseño con IA. Puedo ayudarte a mejorar tu diseño. ¿Qué te gustaría hacer?',
+            is_ai: true
+          });
+          setMessages([welcomeMessage]);
+        }
+      } catch (error) {
+        console.error('Error loading chat history:', error);
+      } finally {
+        setIsInitialized(true);
       }
-      setIsInitialized(true);
     };
 
     if (designId && !isInitialized) {
       loadChatHistory();
+
+      // Subscribe to real-time chat updates
+      const subscription = chatService.subscribeToChat(designId, (payload) => {
+        if (payload.new) {
+          setMessages(prev => [...prev, payload.new as ChatMessage]);
+        }
+      });
+
+      return () => {
+        subscription.unsubscribe();
+      };
     }
   }, [designId, isInitialized]);
 
-  // Save messages whenever they change
-  useEffect(() => {
-    if (isInitialized && messages.length > 0) {
-      saveDesignChat(designId, messages);
-    }
-  }, [messages, designId, isInitialized]);
 
-  const simulateAIResponse = (userMessage: string): string => {
-    const responses = {
-      'colores': 'Puedo sugerir una paleta de colores más armoniosa. ¿Prefieres tonos cálidos, fríos o neutros?',
-      'texto': 'Para mejorar la tipografía, te recomiendo usar máximo 2 fuentes diferentes y asegurar buen contraste.',
-      'composición': 'La regla de los tercios puede mejorar tu composición. ¿Quieres que reposicione algunos elementos?',
-      'elementos': 'Puedo sugerir iconos, formas o imágenes que complementen tu diseño. ¿Qué tipo de elementos necesitas?',
-      'default': 'Entiendo que quieres mejorar tu diseño. Puedo ayudarte con colores, tipografía, composición o elementos visuales. ¿Por dónde empezamos?'
-    };
-
-    const lowerMessage = userMessage.toLowerCase();
-    for (const [key, response] of Object.entries(responses)) {
-      if (key !== 'default' && lowerMessage.includes(key)) {
-        return response;
-      }
-    }
-    return responses.default;
-  };
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !user) return;
 
-    const userMessage: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      content: newMessage,
-      sender: 'team',
-      senderId: user.id,
-      timestamp: new Date(),
-      userName: user.name,
-      avatar: user.avatar,
-      type: 'text'
-    };
+    try {
+      setIsTyping(true);
+      const messageText = newMessage;
+      setNewMessage('');
 
-    setMessages(prev => [...prev, userMessage]);
-    setNewMessage('');
-    setIsTyping(true);
+      // Send user message
+      await chatService.sendMessage({
+        design_id: designId,
+        message: messageText,
+        is_ai: false
+      });
 
-    // Simular respuesta de IA
-    setTimeout(() => {
-      const aiResponse: ChatMessage = {
-        id: `msg-${Date.now() + 1}`,
-        content: simulateAIResponse(newMessage),
-        sender: 'ai',
-        timestamp: new Date(),
-        suggestions: ['Aplicar cambios', 'Ver más opciones', 'Deshacer', 'Continuar'],
-        type: 'design_suggestion'
-      };
-      setMessages(prev => [...prev, aiResponse]);
+      // Get AI response with current design elements
+      setIsTyping(true);
+      const currentElements = getCurrentElements();
+      await chatService.getAIResponse(designId, messageText, messages, currentElements);
+      
+    } catch (error) {
+      console.error('Error sending message:', error);
+    } finally {
       setIsTyping(false);
-    }, 1500);
+    }
   };
 
   const handleSuggestionClick = (suggestion: string) => {
@@ -143,10 +161,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ designId }) => {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         <AnimatePresence>
           {messages.map((message) => {
-            const isTeamMessage = message.sender === 'team';
-            const isAiMessage = message.sender === 'ai';
-            const isCurrentUser = message.senderId === user?.id;
-            const memberInfo = message.senderId ? mockUsers.find(u => u.id === message.senderId) : null;
+            const isAiMessage = message.is_ai;
+            const isCurrentUser = message.user_id === user?.id;
             
             return (
               <motion.div
@@ -158,15 +174,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ designId }) => {
               >
                 <div className={`max-w-[80%] ${isCurrentUser ? 'order-2' : 'order-1'}`}>
                   {/* Message header for team messages */}
-                  {isTeamMessage && !isCurrentUser && memberInfo && (
+                  {!isAiMessage && !isCurrentUser && message.profiles && (
                     <div className="flex items-center space-x-2 mb-1">
-                      <img
-                        src={memberInfo.avatar}
-                        alt={memberInfo.name}
-                        className="w-6 h-6 rounded-full border border-white/30"
-                      />
-                      <span className="text-xs font-medium text-white/80">{memberInfo.name}</span>
-                      <span className="text-xs text-white/60">{memberInfo.role}</span>
+                      <div className="w-6 h-6 rounded-full bg-gradient-to-r from-purple-400 to-pink-400 flex items-center justify-center text-white text-xs font-semibold">
+                        {message.profiles.name?.charAt(0)?.toUpperCase() || 'U'}
+                      </div>
+                      <span className="text-xs font-medium text-white/80">{message.profiles.name}</span>
                     </div>
                   )}
                   
@@ -177,22 +190,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ designId }) => {
                       ? 'bg-white/50 backdrop-blur-sm border border-white/30 text-gray-800'
                       : 'bg-white/30 backdrop-blur-sm border border-white/20 text-white'
                   }`}>
-                    <p className="text-sm">{message.content}</p>
+                    <p className="text-sm">{message.message}</p>
                   </div>
-                  
-                  {message.suggestions && (
-                    <div className="mt-2 space-y-1">
-                      {message.suggestions.map((suggestion, index) => (
-                        <button
-                          key={index}
-                          onClick={() => handleSuggestionClick(suggestion)}
-                          className="block w-full text-left text-xs bg-white/30 hover:bg-white/50 backdrop-blur-sm border border-white/20 rounded-lg px-2 py-1 text-white/80 transition-all"
-                        >
-                          {suggestion}
-                        </button>
-                      ))}
-                    </div>
-                  )}
                   
                   <div className={`flex items-center mt-1 space-x-2 ${
                     isCurrentUser ? 'justify-end' : 'justify-start'
@@ -202,24 +201,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ designId }) => {
                         <Bot className="w-3 h-3 text-white" />
                       </div>
                     )}
-                    {isCurrentUser && user?.avatar && (
-                      <img
-                        src={user.avatar}
-                        alt={user.name}
-                        className="w-5 h-5 rounded-full"
-                      />
+                    {isCurrentUser && (
+                      <div className="w-5 h-5 rounded-full bg-gradient-to-r from-purple-400 to-pink-400 flex items-center justify-center text-white text-xs font-semibold">
+                        {user?.name?.charAt(0)?.toUpperCase() || 'U'}
+                      </div>
                     )}
                     <span className="text-xs text-white/60">
-                      {message.timestamp instanceof Date 
-                        ? message.timestamp.toLocaleTimeString([], { 
-                            hour: '2-digit', 
-                            minute: '2-digit' 
-                          })
-                        : new Date(message.timestamp).toLocaleTimeString([], { 
-                            hour: '2-digit', 
-                            minute: '2-digit' 
-                          })
-                      }
+                      {new Date(message.created_at).toLocaleTimeString([], { 
+                        hour: '2-digit', 
+                        minute: '2-digit' 
+                      })}
                     </span>
                   </div>
                 </div>
@@ -250,9 +241,29 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ designId }) => {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Quick Actions */}
+      {/* Quick Actions - Sugerencias Inteligentes */}
       <div className="p-3 border-t border-white/20 flex-shrink-0">
-        <div className="grid grid-cols-3 gap-2 mb-3">
+        {quickSuggestions.length > 0 && (
+          <div className="mb-3">
+            <div className="text-xs text-gray-600 mb-2 flex items-center">
+              <Sparkles className="w-3 h-3 mr-1" />
+              Sugerencias de IA
+            </div>
+            <div className="grid grid-cols-1 gap-1">
+              {quickSuggestions.map((suggestion, index) => (
+                <button
+                  key={index}
+                  onClick={() => handleSuggestionClick(suggestion)}
+                  className="p-2 bg-gradient-to-r from-purple-500/10 to-cyan-500/10 hover:from-purple-500/20 hover:to-cyan-500/20 backdrop-blur-sm rounded-lg transition-all text-xs text-left border border-purple-200/30"
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        <div className="grid grid-cols-3 gap-2">
           <button
             onClick={() => handleSuggestionClick('Cambiar colores del diseño')}
             className="flex flex-col items-center p-2 bg-white/30 hover:bg-white/50 backdrop-blur-sm rounded-lg transition-all text-xs"

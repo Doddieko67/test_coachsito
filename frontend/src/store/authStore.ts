@@ -1,60 +1,155 @@
 import { create } from 'zustand';
-import { mockUsers, setCurrentUser, initializeData, type User } from '../data/mockData';
+import { authService } from '../services/auth.service';
+import { supabase } from '../lib/supabase';
+import type { Database } from '../types/supabase';
+
+type Profile = Database['public']['Tables']['profiles']['Row'];
 
 interface AuthState {
-  user: User | null;
+  user: Profile | null;
   isAuthenticated: boolean;
-  allUsers: User[];
+  loading: boolean;
+  error: string | null;
+  initialized: boolean;
   login: (email: string, password: string) => Promise<boolean>;
-  logout: () => void;
-  switchUser: (userId: string) => void;
-  initializeAuth: () => void;
+  signUp: (email: string, password: string, name: string) => Promise<boolean>;
+  signInWithGoogle: () => Promise<boolean>;
+  logout: () => Promise<void>;
+  initializeAuth: () => Promise<void>;
+  updateProfile: (updates: Partial<Profile>) => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   isAuthenticated: false,
-  allUsers: mockUsers,
+  loading: true,
+  error: null,
+  initialized: false,
   
-  initializeAuth: () => {
-    initializeData();
-    const savedUserId = localStorage.getItem('currentUserId');
-    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
+  initializeAuth: async () => {
+    const state = useAuthStore.getState();
+    if (state.initialized) return;
     
-    if (savedUserId && isAuthenticated) {
-      const user = mockUsers.find(u => u.id === savedUserId);
-      if (user) {
-        set({ user, isAuthenticated: true });
+    try {
+      set({ loading: true, error: null });
+      
+      // Check for existing session
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session) {
+        const user = await authService.getCurrentUser();
+        set({ user, isAuthenticated: true, loading: false, initialized: true });
+      } else {
+        set({ user: null, isAuthenticated: false, loading: false, initialized: true });
       }
+      
+      // Listen for auth changes
+      const { data: { subscription } } = authService.onAuthStateChange(async (event, session) => {
+        if (event === 'SIGNED_IN' && session) {
+          const user = await authService.getCurrentUser();
+          set({ user, isAuthenticated: true });
+        } else if (event === 'SIGNED_OUT') {
+          set({ user: null, isAuthenticated: false });
+        }
+      });
+      
+      // Store subscription for cleanup if needed
+      (window as any).__authSubscription = subscription;
+      
+    } catch (error) {
+      console.error('Auth initialization error:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Failed to initialize auth',
+        loading: false 
+      });
     }
   },
 
   login: async (email: string, password: string) => {
-    // Simulación de login - buscar usuario por email
-    if (email && password) {
-      const user = mockUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
-      if (user) {
-        setCurrentUser(user.id);
-        localStorage.setItem('isAuthenticated', 'true');
-        set({ user, isAuthenticated: true });
-        return true;
-      }
+    try {
+      set({ loading: true, error: null });
+      
+      await authService.signIn(email, password);
+      const user = await authService.getCurrentUser();
+      
+      set({ user, isAuthenticated: true, loading: false });
+      return true;
+    } catch (error) {
+      console.error('Login error:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Login failed',
+        loading: false 
+      });
+      return false;
     }
-    return false;
   },
 
-  logout: () => {
-    localStorage.removeItem('currentUserId');
-    localStorage.removeItem('isAuthenticated');
-    set({ user: null, isAuthenticated: false });
+  signUp: async (email: string, password: string, name: string) => {
+    try {
+      set({ loading: true, error: null });
+      
+      await authService.signUp(email, password, name);
+      
+      // Auto login after signup
+      await authService.signIn(email, password);
+      const user = await authService.getCurrentUser();
+      
+      set({ user, isAuthenticated: true, loading: false });
+      return true;
+    } catch (error) {
+      console.error('Signup error:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Signup failed',
+        loading: false 
+      });
+      return false;
+    }
   },
 
-  switchUser: (userId: string) => {
-    const user = mockUsers.find(u => u.id === userId);
-    if (user) {
-      setCurrentUser(userId);
-      localStorage.setItem('isAuthenticated', 'true');
-      set({ user, isAuthenticated: true });
+  signInWithGoogle: async () => {
+    try {
+      set({ loading: true, error: null });
+      
+      await authService.signInWithGoogle();
+      
+      // The OAuth flow will redirect, so we don't need to do anything else here
+      return true;
+    } catch (error) {
+      console.error('Google sign-in error:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Google sign-in failed',
+        loading: false 
+      });
+      return false;
+    }
+  },
+
+  logout: async () => {
+    try {
+      set({ loading: true, error: null });
+      await authService.signOut();
+      set({ user: null, isAuthenticated: false, loading: false });
+    } catch (error) {
+      console.error('Logout error:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Logout failed',
+        loading: false 
+      });
+    }
+  },
+
+  updateProfile: async (updates: Partial<Profile>) => {
+    try {
+      set({ loading: true, error: null });
+      const updatedProfile = await authService.updateProfile(updates);
+      set({ user: updatedProfile, loading: false });
+    } catch (error) {
+      console.error('Profile update error:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Failed to update profile',
+        loading: false 
+      });
+      throw error;
     }
   }
 }));

@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { useDropzone } from 'react-dropzone';
-import type { Design } from '../data/mockData';
+import type { Database } from '../types/supabase';
 import { ElementControls } from './ElementControls';
 import { ImageEditor } from './ImageEditor';
 import { ImageCropModal } from './ImageCropModal';
 import { ExcalidrawToolbar, type ToolType } from './ExcalidrawToolbar';
 import { useDesignStore } from '../store/designStore';
+import { uploadService } from '../services/upload.service';
+
+type Design = Database['public']['Tables']['designs']['Row'];
 
 interface DesignCanvasProps {
   design: Design;
@@ -43,13 +46,18 @@ interface CanvasElement {
 }
 
 export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
-  const { uploadFile, updateDesign } = useDesignStore();
+  const { updateDesignLocally } = useDesignStore();
   const [windowSize, setWindowSize] = useState({ width: 1200, height: 800 });
   
-  // Sync elements with design.elements
+  // Sync elements with design.canvas_data.elements
   const [elements, setElements] = useState<CanvasElement[]>(() => {
-    if (design.elements && design.elements.length > 0) {
-      return design.elements;
+    if (!design || !design.canvas_data) {
+      return []; // Return empty array if design not ready
+    }
+    const canvasData = design.canvas_data as any;
+    const canvasElements = canvasData?.elements;
+    if (Array.isArray(canvasElements) && canvasElements.length > 0) {
+      return canvasElements;
     }
     return [
     {
@@ -88,10 +96,33 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
 
   // Update elements when design changes
   useEffect(() => {
-    if (design.elements && design.elements.length > 0) {
-      setElements(design.elements);
+    const canvasData = design.canvas_data as any;
+    const canvasElements = canvasData?.elements;
+    if (Array.isArray(canvasElements) && canvasElements.length > 0) {
+      setElements(canvasElements);
     }
-  }, [design.elements]);
+  }, [design.canvas_data]);
+
+  // Helper function to update canvas data in the store - moved before usage
+  const updateCanvasData = useCallback((newElements: CanvasElement[]) => {
+    if (!design) return; // Don't update if design not ready
+    
+    updateDesignLocally({
+      canvas_data: {
+        ...(design.canvas_data as any),
+        elements: newElements
+      }
+    });
+  }, [updateDesignLocally, design]);
+
+  // Auto-sync elements to store when they change
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      updateCanvasData(elements);
+    }, 100); // Debounce to avoid excessive updates
+
+    return () => clearTimeout(timeoutId);
+  }, [elements, updateCanvasData]);
 
   const [selectedElement, setSelectedElement] = useState<string | null>(null);
   const [draggedElement, setDraggedElement] = useState<string | null>(null);
@@ -100,6 +131,7 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
   const [rotating, setRotating] = useState<string | null>(null);
   const [editingImage, setEditingImage] = useState<string | null>(null);
   const [croppingImage, setCroppingImage] = useState<string | null>(null);
+  const [uploadingImages, setUploadingImages] = useState<string[]>([]); // IDs de imágenes siendo subidas
   
   // Excalidraw-style states
   const [activeTool, setActiveTool] = useState<ToolType>('select');
@@ -109,6 +141,7 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
   const [fillColor, setFillColor] = useState('transparent');
   const [strokeWidth, setStrokeWidth] = useState(2);
   const [startPoint, setStartPoint] = useState<{ x: number; y: number } | null>(null);
+
 
   useEffect(() => {
     const updateWindowSize = () => {
@@ -285,7 +318,7 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
         : el
     );
     setElements(newElements);
-    updateDesign({ elements: newElements });
+    updateCanvasData(newElements);
     setCroppingImage(null);
   };
 
@@ -297,7 +330,7 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
     );
     setElements(newElements);
     // Update the design in the store
-    updateDesign({ elements: newElements });
+    updateCanvasData(newElements);
   };
 
   const createNewElement = (type: CanvasElement['type'], x: number, y: number, width = 100, height = 100): CanvasElement => {
@@ -335,7 +368,7 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
       newElement.fontFamily = 'Arial';
       const newElements = [...elements, newElement];
       setElements(newElements);
-      updateDesign({ elements: newElements });
+      updateCanvasData(newElements);
       // Don't automatically switch back to select for text
       // User can manually switch tools
     }
@@ -398,7 +431,7 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
     if (newElement && (width > 5 || height > 5 || activeTool === 'freedraw')) {
       const newElements = [...elements, newElement];
       setElements(newElements);
-      updateDesign({ elements: newElements });
+      updateCanvasData(newElements);
     }
 
     setIsDrawing(false);
@@ -413,30 +446,67 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
   const handleCanvasDrop = useCallback(async (acceptedFiles: File[]) => {
     for (const file of acceptedFiles) {
       if (file.type.startsWith('image/')) {
+        const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        
         try {
-          const fileUrl = await uploadFile(file);
+          console.log('Uploading image:', file.name);
           
-          const newElement: CanvasElement = {
-            id: `img-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          // Agregar imagen temporal con loading
+          const tempElement: CanvasElement = {
+            id: tempId,
             type: 'image' as const,
-            content: fileUrl,
+            content: URL.createObjectURL(file), // URL temporal para preview
             x: 150 + Math.random() * 200,
             y: 150 + Math.random() * 200,
             width: 200,
             height: 150,
             rotation: 0,
-            opacity: 1
+            opacity: 0.5 // Opacidad reducida mientras sube
           };
 
-          const newElements = [...elements, newElement];
-          setElements(newElements);
-          updateDesign({ elements: newElements });
+          // Agregar al estado de subida
+          setUploadingImages(prev => [...prev, tempId]);
+          setElements(prev => [...prev, tempElement]);
+          
+          // Optimizar imagen antes de subir
+          const optimizedFile = await uploadService.optimizeImage(file, 1920, 1080, 0.8);
+          console.log('Image optimized, original size:', file.size, 'optimized size:', optimizedFile.size);
+          
+          // Subir a Supabase Storage
+          const fileUrl = await uploadService.uploadImage(optimizedFile, 'designs');
+          console.log('Image uploaded successfully:', fileUrl);
+          
+          // Actualizar elemento con URL real y opacidad completa
+          setElements(prev => prev.map(el => 
+            el.id === tempId 
+              ? { ...el, content: fileUrl, opacity: 1 }
+              : el
+          ));
+          
+          // Remover de estado de subida
+          setUploadingImages(prev => prev.filter(id => id !== tempId));
+          
+          // Actualizar canvas data
+          const updatedElements = elements.map(el => 
+            el.id === tempId 
+              ? { ...el, content: fileUrl, opacity: 1 }
+              : el
+          );
+          updateCanvasData([...updatedElements, { ...tempElement, content: fileUrl, opacity: 1 }]);
+          
         } catch (error) {
           console.error('Error uploading file:', error);
+          
+          // Remover elemento temporal en caso de error
+          setElements(prev => prev.filter(el => el.id !== tempId));
+          setUploadingImages(prev => prev.filter(id => id !== tempId));
+          
+          // TODO: Mostrar notificación de error al usuario
+          alert(`Error subiendo imagen: ${(error as any)?.message || 'Error desconocido'}`);
         }
       }
     }
-  }, [elements, uploadFile, updateDesign]);
+  }, [elements, updateCanvasData]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: handleCanvasDrop,
@@ -448,6 +518,12 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
   });
 
   const renderElement = (element: CanvasElement) => {
+    // Determinar si deshabilitar pointer events para este elemento
+    const shouldDisablePointerEvents = 
+      activeTool !== 'select' || 
+      (draggedElement && draggedElement !== element.id) ||
+      isDrawing;
+
     const commonStyle = {
       position: 'absolute' as const,
       left: element.x,
@@ -456,7 +532,18 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
       height: element.height,
       transform: `rotate(${element.rotation || 0}deg)`,
       opacity: element.opacity ?? 1,
-      cursor: draggedElement === element.id ? 'grabbing' : (activeTool === 'select' ? 'grab' : 'default')
+      cursor: shouldDisablePointerEvents 
+        ? 'default' 
+        : (draggedElement === element.id ? 'grabbing' : 'grab'),
+      pointerEvents: shouldDisablePointerEvents ? 'none' as const : 'auto' as const,
+      zIndex: selectedElement === element.id ? 1000 : 1,
+      userSelect: 'none' as const
+    };
+
+    // Props comunes para eventos
+    const eventProps = shouldDisablePointerEvents ? {} : {
+      onClick: (e: React.MouseEvent) => handleElementClick(element.id, e),
+      onMouseDown: (e: React.MouseEvent) => handleMouseDown(element.id, e)
     };
     
     switch (element.type) {
@@ -478,10 +565,9 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
               background: 'transparent'
             }}
             className="select-none"
-            onClick={(e) => handleElementClick(element.id, e)}
-            onMouseDown={(e) => handleMouseDown(element.id, e)}
-            onDoubleClick={() => handleElementDoubleClick(element.id)}
-            whileHover={{ scale: 1.02 }}
+            {...eventProps}
+            onDoubleClick={shouldDisablePointerEvents ? undefined : () => handleElementDoubleClick(element.id)}
+            whileHover={shouldDisablePointerEvents ? {} : { scale: 1.02 }}
           >
             {element.content}
           </motion.div>
@@ -499,9 +585,8 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
               backgroundColor: element.fillColor || 'transparent'
             }}
             className="rounded-lg"
-            onClick={(e) => handleElementClick(element.id, e)}
-            onMouseDown={(e) => handleMouseDown(element.id, e)}
-            whileHover={{ scale: 1.02 }}
+            {...eventProps}
+            whileHover={shouldDisablePointerEvents ? {} : { scale: 1.02 }}
           />
         );
 
@@ -517,9 +602,8 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
               backgroundColor: element.fillColor || 'transparent',
               borderRadius: '50%'
             }}
-            onClick={(e) => handleElementClick(element.id, e)}
-            onMouseDown={(e) => handleMouseDown(element.id, e)}
-            whileHover={{ scale: 1.02 }}
+            {...eventProps}
+            whileHover={shouldDisablePointerEvents ? {} : { scale: 1.02 }}
           />
         );
 
@@ -535,9 +619,8 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
               backgroundColor: element.fillColor || 'transparent',
               transform: `${commonStyle.transform} rotate(45deg)`
             }}
-            onClick={(e) => handleElementClick(element.id, e)}
-            onMouseDown={(e) => handleMouseDown(element.id, e)}
-            whileHover={{ scale: 1.02 }}
+            {...eventProps}
+            whileHover={shouldDisablePointerEvents ? {} : { scale: 1.02 }}
           />
         );
 
@@ -546,33 +629,39 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
           `brightness(${element.filters.brightness || 100}%) contrast(${element.filters.contrast || 100}%) saturate(${element.filters.saturate || 100}%) blur(${element.filters.blur || 0}px)` 
           : 'none';
 
+        const isUploading = uploadingImages.includes(element.id);
+
         return (
-          <motion.img
-            key={element.id}
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            src={element.content || element.src}
-            alt="Design element"
-            style={{
-              position: 'absolute',
-              left: element.x,
-              top: element.y,
-              width: element.width,
-              height: element.height,
-              transform: `rotate(${element.rotation || 0}deg)`,
-              opacity: element.opacity ?? 1,
-              filter: imageFilters,
-              cursor: draggedElement === element.id ? 'grabbing' : 'grab'
-            }}
-            className="object-cover rounded"
-            onClick={(e) => handleElementClick(element.id, e)}
-            onMouseDown={(e) => handleMouseDown(element.id, e)}
-            whileHover={{ scale: 1.02 }}
-            onError={(e) => {
-              console.error('Error loading image:', element.content || element.src);
-              e.currentTarget.style.background = '#f3f4f6';
-            }}
-          />
+          <div key={element.id} style={commonStyle} className="relative">
+            <motion.img
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              src={element.content || element.src}
+              alt="Design element"
+              style={{
+                width: '100%',
+                height: '100%',
+                filter: imageFilters,
+                opacity: isUploading ? 0.6 : 1
+              }}
+              className="object-cover rounded"
+              {...eventProps}
+              whileHover={shouldDisablePointerEvents ? {} : { scale: 1.02 }}
+              onError={(e) => {
+                console.error('Error loading image:', element.content || element.src);
+                e.currentTarget.style.background = '#f3f4f6';
+              }}
+              draggable={false}
+            />
+            {isUploading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 rounded">
+                <div className="flex flex-col items-center text-white">
+                  <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mb-2"></div>
+                  <span className="text-xs">Subiendo...</span>
+                </div>
+              </div>
+            )}
+          </div>
         );
 
       case 'line':
@@ -705,6 +794,18 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
     }
   };
 
+  // Show loading if design is not ready
+  if (!design) {
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Preparando canvas...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full w-full flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden max-w-full max-h-full">
@@ -712,7 +813,7 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
           {...getRootProps()}
           className={`relative bg-white transition-colors duration-200 ${
             isDragActive ? 'bg-blue-50 border-2 border-dashed border-blue-400' : ''
-          } ${activeTool !== 'select' ? 'cursor-crosshair' : ''}`}
+          } ${activeTool !== 'select' ? 'cursor-crosshair bg-blue-50/20' : ''}`}
           style={{ 
             width: Math.min(1000, windowSize.width - 400), 
             height: Math.min(700, windowSize.height - 200),
@@ -828,7 +929,7 @@ export const DesignCanvas: React.FC<DesignCanvasProps> = ({ design }) => {
 
           {/* Design info */}
           <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 text-sm text-gray-600 shadow-lg z-10">
-            {design.name}
+            {design.title}
           </div>
         </div>
       </div>

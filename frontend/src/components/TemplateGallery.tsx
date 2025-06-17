@@ -1,25 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Plus, Filter, Grid3X3, Clock, Users, ChevronDown } from 'lucide-react';
+import { Search, Plus, Filter, Grid3X3, Clock, Users } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useDesignStore } from '../store/designStore';
 import { useAuthStore } from '../store/authStore';
 
-interface TemplateGalleryProps {
-  onCreateDesign: () => void;
-}
-
-export const TemplateGallery: React.FC<TemplateGalleryProps> = ({ onCreateDesign }) => {
+export const TemplateGallery: React.FC = () => {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [activeTab, setActiveTab] = useState<'templates' | 'designs'>('designs');
-  const [showUserSelector, setShowUserSelector] = useState(false);
-  const { templates, createDesign, userDesigns, loadDesign } = useDesignStore();
-  const { user, logout, allUsers, switchUser } = useAuthStore();
+  const { templates, createDesign, userDesigns, loadDesign, loadTemplates, loadUserDesigns, loading, error } = useDesignStore();
+  const { user, logout } = useAuthStore();
 
   const categories = ['Todos', ...Array.from(new Set([
-    ...templates.map(t => t.category),
-    ...userDesigns.map(d => d.category)
+    ...templates.map(t => t.category)
   ]))];
+
+  // Load data on component mount
+  useEffect(() => {
+    loadTemplates();
+    loadUserDesigns();
+  }, [loadTemplates, loadUserDesigns]);
 
   const filteredTemplates = templates.filter(template => {
     const matchesSearch = template.name.toLowerCase().includes(searchTerm.toLowerCase());
@@ -28,44 +30,42 @@ export const TemplateGallery: React.FC<TemplateGalleryProps> = ({ onCreateDesign
   });
 
   const filteredDesigns = userDesigns.filter(design => {
-    const matchesSearch = design.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = selectedCategory === 'Todos' || design.category === selectedCategory;
+    const matchesSearch = design.title.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = selectedCategory === 'Todos' || selectedCategory === 'General'; // Ajustar según tu lógica de categorías
     return matchesSearch && matchesCategory;
   });
 
-  const handleTemplateSelect = (templateId: string) => {
-    createDesign(templateId);
-    onCreateDesign();
+  const handleTemplateSelect = async (templateId: string) => {
+    try {
+      await createDesign(`Diseño desde template`, templateId);
+      // Navigate to editor - currentDesign should be set by createDesign
+      navigate('/editor');
+    } catch (error) {
+      console.error('Error creating design from template:', error);
+    }
   };
 
-  const handleCreateBlank = () => {
-    createDesign();
-    onCreateDesign();
+  const handleCreateBlank = async () => {
+    try {
+      await createDesign('Nuevo Diseño');
+      // Navigate to editor - currentDesign should be set by createDesign
+      navigate('/editor');
+    } catch (error) {
+      console.error('Error creating blank design:', error);
+    }
   };
 
-  const handleDesignSelect = (designId: string) => {
-    loadDesign(designId);
-    onCreateDesign();
+  const handleDesignSelect = async (designId: string) => {
+    try {
+      await loadDesign(designId);
+      // Navigate to editor with specific design ID
+      navigate(`/editor/${designId}`);
+    } catch (error) {
+      console.error('Error loading design:', error);
+    }
   };
 
-  const handleUserSwitch = (userId: string) => {
-    switchUser(userId);
-    setShowUserSelector(false);
-  };
 
-  // Close user selector when clicking outside
-  useEffect(() => {
-    const handleClickOutside = () => {
-      if (showUserSelector) {
-        setShowUserSelector(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showUserSelector]);
 
   return (
     <div 
@@ -110,62 +110,20 @@ export const TemplateGallery: React.FC<TemplateGalleryProps> = ({ onCreateDesign
             </div>
             
             <div className="flex items-center space-x-4">
-              {/* User Selector */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowUserSelector(!showUserSelector)}
-                  className="flex items-center space-x-3 px-4 py-2 rounded-xl transition-all hover:bg-white/10"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.2)',
-                    backdropFilter: 'blur(10px)'
-                  }}
-                >
-                  <img
-                    src={user?.avatar}
-                    alt={user?.name}
-                    className="w-8 h-8 rounded-full border-2 border-white/30"
-                  />
-                  <div className="text-left">
-                    <div className="text-sm font-medium text-white">{user?.name}</div>
-                    <div className="text-xs text-white/70">{user?.role}</div>
-                  </div>
-                  <ChevronDown className="w-4 h-4 text-white/60" />
-                </button>
-
-                {showUserSelector && (
-                  <div 
-                    className="absolute top-full right-0 mt-2 w-64 rounded-xl border border-white/20 shadow-2xl z-50"
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.25)',
-                      backdropFilter: 'blur(20px)'
-                    }}
-                  >
-                    <div className="p-3">
-                      <div className="text-xs font-medium text-white/80 mb-2">Cambiar Usuario</div>
-                      {allUsers.map((userOption) => (
-                        <button
-                          key={userOption.id}
-                          onClick={() => handleUserSwitch(userOption.id)}
-                          className={`w-full flex items-center space-x-3 p-2 rounded-lg transition-all ${
-                            userOption.id === user?.id 
-                              ? 'bg-white/20 text-white' 
-                              : 'hover:bg-white/10 text-white/80'
-                          }`}
-                        >
-                          <img
-                            src={userOption.avatar}
-                            alt={userOption.name}
-                            className="w-8 h-8 rounded-full border border-white/30"
-                          />
-                          <div className="text-left flex-1">
-                            <div className="text-sm font-medium">{userOption.name}</div>
-                            <div className="text-xs text-white/60">{userOption.role}</div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+              {/* User Info */}
+              <div className="flex items-center space-x-3 px-4 py-2 rounded-xl"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  backdropFilter: 'blur(10px)'
+                }}
+              >
+                <div className="w-8 h-8 rounded-full bg-gradient-to-r from-purple-400 to-pink-400 flex items-center justify-center text-white font-semibold text-sm">
+                  {user?.name?.charAt(0)?.toUpperCase() || 'U'}
+                </div>
+                <div className="text-left">
+                  <div className="text-sm font-medium text-white">{user?.name}</div>
+                  <div className="text-xs text-white/70 capitalize">{user?.role}</div>
+                </div>
               </div>
 
               <button
@@ -296,8 +254,24 @@ export const TemplateGallery: React.FC<TemplateGalleryProps> = ({ onCreateDesign
           </div>
         )}
 
+        {/* Loading State */}
+        {loading && (
+          <div className="flex items-center justify-center py-12">
+            <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mr-3"></div>
+            <span className="text-white/80">Cargando...</span>
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && (
+          <div className="bg-red-500/20 border border-red-500/50 rounded-xl p-4 mb-6">
+            <p className="text-white">Error: {error}</p>
+          </div>
+        )}
+
         {/* Content Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        {!loading && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {activeTab === 'templates' 
             ? filteredTemplates.map((template, index) => (
                 <motion.div
@@ -318,7 +292,7 @@ export const TemplateGallery: React.FC<TemplateGalleryProps> = ({ onCreateDesign
                 >
                   <div className="aspect-[4/3] overflow-hidden">
                     <img
-                      src={template.thumbnail}
+                      src={template.thumbnail_url || 'https://images.unsplash.com/photo-1586953208448-b95a79798f07?w=300&h=200&fit=crop'}
                       alt={template.name}
                       className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
                     />
@@ -348,36 +322,32 @@ export const TemplateGallery: React.FC<TemplateGalleryProps> = ({ onCreateDesign
                 >
                   <div className="aspect-[4/3] overflow-hidden">
                     <img
-                      src={design.thumbnail}
-                      alt={design.name}
+                      src={design.thumbnail_url || 'https://images.unsplash.com/photo-1586953208448-b95a79798f07?w=300&h=200&fit=crop'}
+                      alt={design.title}
                       className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
                     />
                   </div>
                   <div className="p-4">
                     <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-semibold text-white text-lg">{design.name}</h3>
-                      {design.collaborators.length > 0 && (
-                        <div className="flex items-center space-x-1">
-                          <Users className="w-4 h-4 text-white/60" />
-                          <span className="text-xs text-white/60">{design.collaborators.length}</span>
-                        </div>
-                      )}
+                      <h3 className="font-semibold text-white text-lg">{design.title}</h3>
+                      <div className="flex items-center space-x-1">
+                        <Users className="w-4 h-4 text-white/60" />
+                        <span className="text-xs text-white/60">1</span>
+                      </div>
                     </div>
-                    <p className="text-white/70 text-sm">{design.category}</p>
+                    <p className="text-white/70 text-sm">Diseño</p>
                     <p className="text-white/50 text-xs mt-1">
-                      Actualizado {design.updatedAt instanceof Date 
-                        ? design.updatedAt.toLocaleDateString()
-                        : new Date(design.updatedAt).toLocaleDateString()
-                      }
+                      Actualizado {new Date(design.updated_at).toLocaleDateString()}
                     </p>
                   </div>
                 </motion.div>
               ))
           }
-        </div>
+          </div>
+        )}
 
         {/* Empty States */}
-        {activeTab === 'templates' && filteredTemplates.length === 0 && (
+        {!loading && activeTab === 'templates' && filteredTemplates.length === 0 && (
           <div className="text-center py-12">
             <div className="text-white/60 mb-6">
               <Search className="w-16 h-16 mx-auto mb-4" />
@@ -387,7 +357,7 @@ export const TemplateGallery: React.FC<TemplateGalleryProps> = ({ onCreateDesign
           </div>
         )}
 
-        {activeTab === 'designs' && filteredDesigns.length === 0 && (
+        {!loading && activeTab === 'designs' && filteredDesigns.length === 0 && (
           <div className="text-center py-12">
             <div className="text-white/60 mb-6">
               <Clock className="w-16 h-16 mx-auto mb-4" />
